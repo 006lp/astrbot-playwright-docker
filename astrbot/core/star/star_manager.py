@@ -212,11 +212,11 @@ class PluginManager:
         result = await self.load(specified_module_path)
 
         # 更新所有插件的平台兼容性
-        await self.updateAllPlatformCompatibility()
+        await self.update_all_platform_compatibility()
 
         return result
 
-    async def updateAllPlatformCompatibility(self):
+    async def update_all_platform_compatibility(self):
         """更新所有插件的平台兼容性设置"""
         # 获取最新的平台插件启用配置
         plugin_enable_config = self.config.get("platform_settings", {}).get(
