@@ -244,6 +244,8 @@ const viewReadme = (plugin) => {
   readmeDialog.pluginName = plugin.name;
   readmeDialog.repoUrl = plugin.repo;
   readmeDialog.show = true;
+};
+
 // 获取插件平台可用性配置
 const getPlatformEnableConfig = async () => {
   loadingPlatformData.value = true;
@@ -588,7 +590,6 @@ onMounted(async () => {
     :plugin-name="readmeDialog.pluginName"
     :repo-url="readmeDialog.repoUrl"
   />
-</template>
 </template>
 
 <style scoped>
