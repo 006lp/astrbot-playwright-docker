@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m pip install uv
 RUN uv pip install -r requirements.txt --no-cache-dir --system
 RUN uv pip install socksio uv pyffmpeg pilk --no-cache-dir --system
+RUN uv pip install playwright --system --no-cache-dir
+RUN python -m playwright install --with-deps chromium
 
 # 释出 ffmpeg
 RUN python -c "from pyffmpeg import FFmpeg; ff = FFmpeg();"
