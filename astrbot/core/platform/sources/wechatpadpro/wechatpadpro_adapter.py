@@ -69,39 +69,42 @@ class WeChatPadProAdapter(Platform):
             self.auth_key = loaded_credentials.get("auth_key")
             self.wxid = loaded_credentials.get("wxid")
 
+        isLoginIn = await self.check_online_status()
+
         # 检查在线状态
-        if self.auth_key and await self.check_online_status():
-            logger.info("WeChatPadPro 设备已在线，跳过扫码登录。")
+        if self.auth_key and isLoginIn:
+            logger.info("WeChatPadPro 设备已在线，凭据存在，跳过扫码登录。")
             # 如果在线，连接 WebSocket 接收消息
             self.ws_handle_task = asyncio.create_task(self.connect_websocket())
         else:
-            logger.info("WeChatPadPro 设备不在线或无可用凭据，开始扫码登录流程。")
             # 1. 生成授权码
-            await self.generate_auth_key()
-
             if not self.auth_key:
-                logger.error("无法获取授权码，WeChatPadPro 适配器启动失败。")
-                return
+                logger.info("WeChatPadPro 无可用凭据，将生成新的授权码。")
+                await self.generate_auth_key()
 
             # 2. 获取登录二维码
-            qr_code_url = await self.get_login_qr_code()
+            if not isLoginIn:
+                logger.info("WeChatPadPro 设备已离线，开始扫码登录。")
+                qr_code_url = await self.get_login_qr_code()
 
-            if qr_code_url:
-                logger.info(f"请扫描以下二维码登录: {qr_code_url}")
-            else:
-                logger.error("无法获取登录二维码。")
-                return
+                if qr_code_url:
+                    logger.info(f"请扫描以下二维码登录: {qr_code_url}")
+                else:
+                    logger.error("无法获取登录二维码。")
+                    return
 
-            # 3. 检测扫码状态
-            login_successful = await self.check_login_status()
+                # 3. 检测扫码状态
+                login_successful = await self.check_login_status()
 
-            if login_successful:
-                # 登录成功后，连接 WebSocket 接收消息
-                self.ws_handle_task = asyncio.create_task(self.connect_websocket())
-            else:
-                logger.warning("登录失败或超时，WeChatPadPro 适配器将关闭。")
-                await self.terminate()
-                return
+                if login_successful:
+                    logger.info("登录成功，WeChatPadPro适配器已连接。")
+                else:
+                    logger.warning("登录失败或超时，WeChatPadPro 适配器将关闭。")
+                    await self.terminate()
+                    return
+            
+            # 登录成功后，连接 WebSocket 接收消息
+            self.ws_handle_task = asyncio.create_task(self.connect_websocket())
 
         self._shutdown_event = asyncio.Event()
         await self._shutdown_event.wait()
@@ -156,16 +159,29 @@ class WeChatPadProAdapter(Platform):
                         if login_state == 1:
                             logger.info("WeChatPadPro 设备当前在线。")
                             return True
-                        else:
+                        # login_state == 3 为离线状态
+                        elif login_state == 3:
                             logger.info(
-                                f"WeChatPadPro 设备不在线，登录状态: {login_state}"
+                                "WeChatPadPro 设备不在线。"
                             )
                             return False
+                        else:
+                            logger.error(
+                                f"未知的在线状态: {login_state:}"
+                            )
+                            return False
+                    # Code == 300 为微信退出状态。
+                    elif response.status == 200 and response_data.get("Code") == 300:
+                        logger.info(
+                            "WeChatPadPro 设备已退出。"
+                        )
+                        return False
                     else:
                         logger.error(
                             f"检查在线状态失败: {response.status}, {response_data}"
                         )
                         return False
+                    
             except aiohttp.ClientConnectorError as e:
                 logger.error(f"连接到 WeChatPadPro 服务失败: {e}")
                 return False
@@ -179,7 +195,7 @@ class WeChatPadProAdapter(Platform):
         """
         url = f"{self.base_url}/admin/GenAuthKey1"
         params = {"key": self.admin_key}
-        payload = {"Count": 1, "Days": 30}  # 生成一个有效期30天的授权码
+        payload = {"Count": 1, "Days": 365}  # 生成一个有效期365天的授权码
 
         async with aiohttp.ClientSession() as session:
             try:
@@ -336,12 +352,10 @@ class WeChatPadProAdapter(Platform):
                             message = await asyncio.wait_for(
                                 websocket.recv(), timeout=wait_time
                             )
-                            logger.info(message)
+                            # logger.debug(message) # 不显示原始消息内容
                             asyncio.create_task(self.handle_websocket_message(message))
                         except asyncio.TimeoutError:
-                            logger.warning(
-                                f"WebSocket 连接空闲超过 {wait_time} s"
-                            )
+                            logger.warning(f"WebSocket 连接空闲超过 {wait_time} s")
                             break
                         except websockets.exceptions.ConnectionClosedOK:
                             logger.info("WebSocket 连接正常关闭。")
@@ -350,7 +364,7 @@ class WeChatPadProAdapter(Platform):
                             logger.error(f"处理 WebSocket 消息时发生错误: {e}")
                             break
             except Exception as e:
-                logger.error(f"WebSocket 连接失败: {e}")
+                logger.error(f"WebSocket 连接失败: {e}, 请检查WeChatPadPro服务状态，或尝试重启WeChatPadPro适配器。")
                 await asyncio.sleep(5)
 
     async def handle_websocket_message(self, message: str):
@@ -425,7 +439,7 @@ class WeChatPadProAdapter(Platform):
         ):
             # 再根据消息类型处理消息内容
             await self._process_message_content(abm, raw_message, msg_type, content)
-
+            
             return abm
         return None
 
@@ -627,3 +641,67 @@ class WeChatPadProAdapter(Platform):
         )
         # 调用实例方法 send
         await sending_event.send(message_chain)
+
+    async def get_contact_list(self):
+        """
+        获取联系人列表。
+        """
+        url = f"{self.base_url}/friend/GetContactList"
+        params = {"key": self.auth_key}
+        payload = {"CurrentChatRoomContactSeq": 0, "CurrentWxcontactSeq": 0}
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(url, params=params, json=payload) as response:
+                    if response.status != 200:
+                        logger.error(f"获取联系人列表失败: {response.status}")
+                        return None
+                    result = await response.json()
+                    if result.get("Code") == 200 and result.get("Data"):
+                        contact_list = (
+                            result.get("Data", {})
+                            .get("ContactList", {})
+                            .get("contactUsernameList", [])
+                        )
+                        return contact_list
+                    else:
+                        logger.error(f"获取联系人列表失败: {result}")
+                        return None
+            except aiohttp.ClientConnectorError as e:
+                logger.error(f"连接到 WeChatPadPro 服务失败: {e}")
+                return None
+            except Exception as e:
+                logger.error(f"获取联系人列表时发生错误: {e}")
+                return None
+
+    async def get_contact_details_list(
+        self, room_wx_id_list: list[str] = None, user_names: list[str] = None
+    ) -> Optional[dict]:
+        """
+        获取联系人详情列表。
+        """
+        if room_wx_id_list is None:
+            room_wx_id_list = []
+        if user_names is None:
+            user_names = []
+        url = f"{self.base_url}/friend/GetContactDetailsList"
+        params = {"key": self.auth_key}
+        payload = {"RoomWxIDList": room_wx_id_list, "UserNames": user_names}
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(url, params=params, json=payload) as response:
+                    if response.status != 200:
+                        logger.error(f"获取联系人详情列表失败: {response.status}")
+                        return None
+                    result = await response.json()
+                    if result.get("Code") == 200 and result.get("Data"):
+                        contact_list = result.get("Data", {}).get("contactList", {})
+                        return contact_list
+                    else:
+                        logger.error(f"获取联系人详情列表失败: {result}")
+                        return None
+            except aiohttp.ClientConnectorError as e:
+                logger.error(f"连接到 WeChatPadPro 服务失败: {e}")
+                return None
+            except Exception as e:
+                logger.error(f"获取联系人详情列表时发生错误: {e}")
+                return None

@@ -61,7 +61,6 @@ class RstScene(Enum):
     version="4.0.0",
 )
 class Main(star.Star):
-
     def __init__(self, context: star.Context) -> None:
         self.context = context
         cfg = context.get_config()
@@ -140,7 +139,7 @@ class Main(star.Star):
 {notice}"""
 
         event.set_result(MessageEventResult().message(msg).use_t2i(False))
-
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("llm")
     async def llm(self, event: AstrMessageEvent):
         """开启/关闭 LLM"""
@@ -216,9 +215,7 @@ class Main(star.Star):
         """获取已经安装的插件列表。"""
         plugin_list_info = "已加载的插件：\n"
         for plugin in self.context.get_all_stars():
-            plugin_list_info += (
-                f"- `{plugin.name}` By {plugin.author}: {plugin.desc}"
-            )
+            plugin_list_info += f"- `{plugin.name}` By {plugin.author}: {plugin.desc}"
             if not plugin.activated:
                 plugin_list_info += " (未启用)"
             plugin_list_info += "\n"
@@ -271,9 +268,7 @@ class Main(star.Star):
                 event.set_result(MessageEventResult().message("安装插件成功。"))
             except Exception as e:
                 logger.error(f"安装插件失败: {e}")
-                event.set_result(
-                    MessageEventResult().message(f"安装插件失败: {e}")
-                )
+                event.set_result(MessageEventResult().message(f"安装插件失败: {e}"))
                 return
 
     @plugin.command("help")
@@ -318,7 +313,6 @@ class Main(star.Star):
         ret = f"🧩 插件 {plugin_name} 帮助信息：\n" + help_msg
         ret += "更多帮助信息请查看插件仓库 README。"
         event.set_result(MessageEventResult().message(ret).use_t2i(False))
-
 
     @filter.command("t2i")
     async def t2i(self, event: AstrMessageEvent):
@@ -419,25 +413,21 @@ UID: {user_id} 此 ID 可用于设置管理员。
             event.set_result(MessageEventResult().message("删除白名单成功。"))
         except ValueError:
             event.set_result(MessageEventResult().message("此 SID 不在白名单内。"))
-
+    
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("provider")
     async def provider(
         self, event: AstrMessageEvent, idx: Union[str, int] = None, idx2: int = None
     ):
         """查看或者切换 LLM Provider"""
 
-        if not self.context.get_using_provider():
-            event.set_result(
-                MessageEventResult().message("未找到任何 LLM 提供商。请先配置。")
-            )
-            return
-
         if idx is None:
             ret = "## 载入的 LLM 提供商\n"
             for idx, llm in enumerate(self.context.get_all_providers()):
                 id_ = llm.meta().id
                 ret += f"{idx + 1}. {id_} ({llm.meta().model})"
-                if self.context.get_using_provider().meta().id == id_:
+                provider_using = self.context.get_using_provider()
+                if provider_using and provider_using.meta().id == id_:
                     ret += " (当前使用)"
                 ret += "\n"
 
@@ -483,8 +473,6 @@ UID: {user_id} 此 ID 可用于设置管理员。
                     id_ = provider.meta().id
                     self.context.provider_manager.curr_tts_provider_inst = provider
                     sp.put("curr_provider_tts", id_)
-                    if not self.context.provider_manager.tts_enabled:
-                        self.context.provider_manager.tts_enabled = True
                     event.set_result(
                         MessageEventResult().message(f"成功切换到 {id_}。")
                     )
@@ -499,8 +487,6 @@ UID: {user_id} 此 ID 可用于设置管理员。
                     id_ = provider.meta().id
                     self.context.provider_manager.curr_stt_provider_inst = provider
                     sp.put("curr_provider_stt", id_)
-                    if not self.context.provider_manager.stt_enabled:
-                        self.context.provider_manager.stt_enabled = True
                     event.set_result(
                         MessageEventResult().message(f"成功切换到 {id_}。")
                     )
@@ -512,8 +498,6 @@ UID: {user_id} 此 ID 可用于设置管理员。
                 id_ = provider.meta().id
                 self.context.provider_manager.curr_provider_inst = provider
                 sp.put("curr_provider", id_)
-                if not self.context.provider_manager.provider_enabled:
-                    self.context.provider_manager.provider_enabled = True
                 event.set_result(MessageEventResult().message(f"成功切换到 {id_}。"))
             else:
                 event.set_result(MessageEventResult().message("无效的参数。"))
@@ -588,7 +572,8 @@ UID: {user_id} 此 ID 可用于设置管理员。
             ret += f"\n聊天增强: 已清除 {cnt} 条聊天记录。"
 
         message.set_result(MessageEventResult().message(ret))
-
+    
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("model")
     async def model_ls(
         self, message: AstrMessageEvent, idx_or_name: Union[int, str] = None
@@ -1033,7 +1018,11 @@ UID: {user_id} 此 ID 可用于设置管理员。
                 message.unified_msg_origin, cid
             )
             if not conversation:
-                message.set_result(MessageEventResult().message("请先进入一个对话。可以使用 /new 创建。"))
+                message.set_result(
+                    MessageEventResult().message(
+                        "请先进入一个对话。可以使用 /new 创建。"
+                    )
+                )
             if not conversation.persona_id and not conversation.persona_id == "[%None]":
                 curr_persona_name = (
                     self.context.provider_manager.selected_default_persona["name"]
@@ -1176,7 +1165,7 @@ UID: {user_id} 此 ID 可用于设置管理员。
     @filter.command("gewe_code")
     async def gewe_code(self, event: AstrMessageEvent, code: str):
         """保存 gewechat 验证码"""
-        code_path = os.path.join(get_astrbot_data_path(), "temp","gewe_code")
+        code_path = os.path.join(get_astrbot_data_path(), "temp", "gewe_code")
         with open(code_path, "w", encoding="utf-8") as f:
             f.write(code)
         yield event.plain_result("验证码已保存。")
